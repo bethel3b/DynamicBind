@@ -1,1 +1,5 @@
 *.pyc
+.gitignore
+__MACOSX/workdir/*
+workdir.zip
+workdir/*
