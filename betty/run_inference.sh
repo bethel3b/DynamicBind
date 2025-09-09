@@ -1,5 +1,5 @@
 #!/bin/bash
-python run_single_protein_inference.py \
+python betty/run_single_protein_inference.py \
     betty/sample_data/1qg8_protein.pdb \
     betty/sample_data/1qg8_ligand.csv \
     --output_dir betty/results \
