@@ -3,3 +3,7 @@
 __MACOSX/workdir/*
 workdir.zip
 workdir/*
+betty/__MACOSX/*
+betty/workdir/*
+
+betty/results*
