@@ -9,12 +9,12 @@ import pandas as pd
 import rdkit.Chem as Chem
 
 # Default values
-HEADER = "test"
+HEADER = "pdbbind"
 PYTHON = "/service_data/betty_dev/miniconda3/envs/dynamicbind/bin/python"
 RELAX_PYTHON = "/service_data/betty_dev/miniconda3/envs/relax/bin/python"
-PROTEIN_FILE = "betty/sample_data/1qg8_protein.pdb"
-LIGAND_FILE = "betty/sample_data/1qg8_ligand.csv"
-OUTPUT_DIR = "betty/results"
+PROTEIN_FILE = "betty/pdbbind/data/run_0000_1zsb/1zsb_protein.pdb"
+LIGAND_FILE = "betty/pdbbind/data/run_0000_1zsb/1zsb_ligand.sdf"
+OUTPUT_DIR = "betty/pdbbind/results"
 RESULT_DIR = "inference_results"
 SAMPLES_PER_COMPLEX = 10
 SAVINGS_PER_COMPLEX = 10
@@ -30,7 +30,7 @@ NO_RELAX = False
 MOVIE = False
 PROTEIN_PATH_IN_LIGAND_FILE = False
 NO_CLEAN = False
-LIGAND_IS_SDF = False
+LIGAND_IS_SDF = True
 PAPER = False
 
 
@@ -214,6 +214,7 @@ args = get_arguments()
 output_dir = args.output_dir
 
 timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M")
+
 output_dir = f"{output_dir}_{timestamp}"
 log_path = os.path.join(output_dir, "logs", "run.log")
 os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -244,142 +245,167 @@ script_folder = os.path.dirname(file_path)
 parent_script_folder = os.path.dirname(script_folder)
 print(f"Run directory: {file_path},\nParent script folder: {parent_script_folder}")
 
-# -------------------------------------------------------------------
-# Set up ligand file and protein file
-# -------------------------------------------------------------------
-protein_path_in_ligandFile = args.protein_path_in_ligandFile
-no_clean = args.no_clean
-ligand_is_sdf = args.ligand_is_sdf
-ligandFile = args.ligandFile
-proteinFile = args.proteinFile
 
-processed_data_dir = os.path.join(output_dir, "processed_data")
-os.makedirs(processed_data_dir, exist_ok=True)
+def process_data(processed_data_dir, args):
+    protein_path_in_ligandFile = args.protein_path_in_ligandFile
+    no_clean = args.no_clean
+    ligand_is_sdf = args.ligand_is_sdf
+    ligandFile = args.ligandFile
+    proteinFile = args.proteinFile
+    logger.info("-" * 80)
+    logger.info(
+        "Data Processing: Cleaning protein file and updating ligand file with protein path"
+    )
+    logger.info("-" * 80)
+    clean_pdb_script_path = os.path.join(parent_script_folder, "clean_pdb.py")
+    if protein_path_in_ligandFile:  # default is False
+        if no_clean:  # default is False
+            ligandFile_with_protein_path = ligandFile
+        else:
+            # Path to ligand file with protein path
+            ligandFile_with_protein_path = os.path.join(
+                processed_data_dir, "ligandFile_with_protein_path.csv"
+            )
+            cmd = f"{relax_python} {clean_pdb_script_path} \
+                {ligandFile} \
+                {ligandFile_with_protein_path}"
+            do(cmd)
+        ligands = pd.read_csv(ligandFile_with_protein_path)
+        assert "ligand" in ligands.columns
+        assert "protein_path" in ligands.columns
 
-logger.info("-" * 80)
-logger.info(
-    "Data Processing: Cleaning protein file and updating ligand file with protein path"
-)
-logger.info("-" * 80)
-clean_pdb_script_path = os.path.join(parent_script_folder, "clean_pdb.py")
-if protein_path_in_ligandFile:  # default is False
-    if no_clean:  # default is False
-        ligandFile_with_protein_path = ligandFile
-    else:
+    elif ligand_is_sdf:  # default is False
+        # Path to cleaned protein file
+        folder_name = os.path.basename(proteinFile).split("_")[0]
+        protein_file_name = os.path.basename(proteinFile)
+        cleaned_proteinFile = os.path.join(
+            processed_data_dir, folder_name, f"cleaned_{protein_file_name}"
+        )
+        os.makedirs(os.path.dirname(cleaned_proteinFile), exist_ok=True)
+        # Path to ligand file with protein path
+        ligandFile_with_protein_path = os.path.join(
+            processed_data_dir,
+            folder_name,
+            f"{folder_name}_ligand_with_protein_path.csv",
+        )
+        # Clean protein file
+        cmd = f"{relax_python} {clean_pdb_script_path} \
+            {proteinFile} \
+            {cleaned_proteinFile}"
+        do(cmd)
+
+        ligandFile_output_path = os.path.join(
+            processed_data_dir, folder_name, f"{folder_name}_ligand.sdf"
+        )
+        # reorder the mol atom number as in smiles.
+        mol = Chem.MolFromMolFile(ligandFile)
+        _ = Chem.MolToSmiles(mol)
+        m_order = list(
+            mol.GetPropsAsDict(includePrivate=True, includeComputed=True)[
+                "_smilesAtomOutputOrder"
+            ]
+        )
+        mol = Chem.RenumberAtoms(mol, m_order)
+        w = Chem.SDWriter(ligandFile_output_path)
+        w.write(mol)
+        w.close()
+        ligands = pd.DataFrame(
+            {"ligand": [ligandFile_output_path], "protein_path": [cleaned_proteinFile]}
+        )
+        ligands.to_csv(ligandFile_with_protein_path, index=0)
+
+    else:  # this is the default case - protein file is in csv format
+        # Path to cleaned protein file
+        cleaned_proteinFile = os.path.join(
+            processed_data_dir, "cleaned_input_proteinFile.pdb"
+        )
         # Path to ligand file with protein path
         ligandFile_with_protein_path = os.path.join(
             processed_data_dir, "ligandFile_with_protein_path.csv"
         )
+        # Clean protein file
+
+        logger.info("Cleaning protein file...")
         cmd = f"{relax_python} {clean_pdb_script_path} \
-            {ligandFile} \
-            {ligandFile_with_protein_path}"
+            {proteinFile} \
+            {cleaned_proteinFile}"
         do(cmd)
-    ligands = pd.read_csv(ligandFile_with_protein_path)
-    assert "ligand" in ligands.columns
-    assert "protein_path" in ligands.columns
+        logger.info(f"Protein file cleaned! Saved to {cleaned_proteinFile}\n")
 
-elif ligand_is_sdf:  # default is False
-    # Path to cleaned protein file
-    cleaned_proteinFile = os.path.join(
-        processed_data_dir,
-        "cleaned_input_proteinFile.pdb",
-    )
-    # Path to ligand file with protein path
-    ligandFile_with_protein_path = os.path.join(
-        processed_data_dir,
-        "ligandFile_with_protein_path.csv",
-    )
-    # Clean protein file
-    cmd = f"{relax_python} {clean_pdb_script_path} \
-        {proteinFile} \
-        {cleaned_proteinFile}"
-    do(cmd)
+        # Read ligand file and add protein path to ligand file columns and save
+        logger.info("Updating ligand file with protein path...")
+        ligands = pd.read_csv(ligandFile)
+        assert "ligand" in ligands.columns
+        ligands["protein_path"] = cleaned_proteinFile
+        ligands.to_csv(ligandFile_with_protein_path, index=0)
+        logger.info(f"Ligand file updated! Saved to {ligandFile_with_protein_path}\n")
+    return ligands, ligandFile_with_protein_path, cleaned_proteinFile
 
-    # reorder the mol atom number as in smiles.
-    ligandFile = f"{output_dir}/" + os.path.basename(ligandFile)
-    mol = Chem.MolFromMolFile(ligandFile)
-    _ = Chem.MolToSmiles(mol)
-    m_order = list(
-        mol.GetPropsAsDict(includePrivate=True, includeComputed=True)[
-            "_smilesAtomOutputOrder"
-        ]
-    )
-    mol = Chem.RenumberAtoms(mol, m_order)
-    w = Chem.SDWriter(ligandFile)
-    w.write(mol)
-    w.close()
-    ligands = pd.DataFrame(
-        {"ligand": [ligandFile], "protein_path": [cleaned_proteinFile]}
-    )
-    ligands.to_csv(ligandFile_with_protein_path, index=0)
 
-else:  # this is the default case - protein file is in csv format
-    # Path to cleaned protein file
-    cleaned_proteinFile = os.path.join(
-        processed_data_dir, "cleaned_input_proteinFile.pdb"
+def setup_model(args):
+    paper = args.paper
+    model = args.model
+    logger.info("-" * 80)
+    logger.info("Model Setup: Setting up model workdir and checkpoint")
+    logger.info("-" * 80)
+    model_workdir = os.path.join(
+        script_folder, "workdir", "big_score_model_sanyueqi_with_time"
     )
-    # Path to ligand file with protein path
-    ligandFile_with_protein_path = os.path.join(
-        processed_data_dir, "ligandFile_with_protein_path.csv"
-    )
-    # Clean protein file
+    if paper:  # default is False
+        ckpt = "ema_inference_epoch314_model.pt"
+    else:  # this is the default case
+        if model == 1:  # default is 1
+            ckpt = "pro_ema_inference_epoch138_model.pt"
 
-    logger.info("Cleaning protein file...")
-    cmd = f"{relax_python} {clean_pdb_script_path} \
-        {proteinFile} \
-        {cleaned_proteinFile}"
-    do(cmd)
-    logger.info(f"Protein file cleaned! Saved to {cleaned_proteinFile}\n")
+    logger.info(f"Model workdir: {model_workdir}")
+    logger.info(f"Checkpoint: {ckpt}\n")
 
-    # Read ligand file and add protein path to ligand file columns and save
-    logger.info("Updating ligand file with protein path...")
-    ligands = pd.read_csv(ligandFile)
-    assert "ligand" in ligands.columns
-    ligands["protein_path"] = cleaned_proteinFile
-    ligands.to_csv(ligandFile_with_protein_path, index=0)
-    logger.info(f"Ligand file updated! Saved to {ligandFile_with_protein_path}\n")
+    return model_workdir, ckpt
+
+
+def setup_protein_dynamic(args):
+    logger.info("-" * 80)
+    logger.info("Protein Dynamic: Setting up protein dynamic")
+    logger.info("-" * 80)
+    rigid_protein = args.rigid_protein
+
+    if not rigid_protein:  # default is False - # this is the default case
+        protein_dynamic = "--protein_dynamic"
+    else:
+        protein_dynamic = ""
+
+    logger.info(f"Protein dynamic: {protein_dynamic}\n")
+    return protein_dynamic
+
 
 # -------------------------------------------------------------------
-# Set up model workdir and checkpoint
+# Process ligand file and protein file
 # -------------------------------------------------------------------
-header = args.header
-paper = args.paper
-model = args.model
+protein_path_in_ligandFile = args.protein_path_in_ligandFile
+ligandFile = args.ligandFile
+proteinFile = args.proteinFile
 
-logger.info("-" * 80)
-logger.info("Model Setup: Setting up model workdir and checkpoint")
-logger.info("-" * 80)
-model_workdir = os.path.join(
-    script_folder, "workdir", "big_score_model_sanyueqi_with_time"
+processed_data_dir = os.path.join("betty", "pdbbind", "processed_data")
+os.makedirs(processed_data_dir, exist_ok=True)
+
+ligands, ligandFile_with_protein_path, cleaned_proteinFile = process_data(
+    processed_data_dir=processed_data_dir, args=args
 )
-if paper:  # default is False
-    ckpt = "ema_inference_epoch314_model.pt"
-else:  # this is the default case
-    if model == 1:  # default is 1
-        ckpt = "pro_ema_inference_epoch138_model.pt"
 
-logger.info(f"Model workdir: {model_workdir}")
-logger.info(f"Checkpoint: {ckpt}\n")
+# Load Ligands data
+ligands = pd.read_csv(ligandFile_with_protein_path)
 
+# Set up model workdir and checkpoint
+model_workdir, ckpt = setup_model(args)
 
-# -------------------------------------------------------------------
 # Set up protein dynamic
-# -------------------------------------------------------------------
-logger.info("-" * 80)
-logger.info("Protein Dynamic: Setting up protein dynamic")
-logger.info("-" * 80)
-rigid_protein = args.rigid_protein
+protein_dynamic = setup_protein_dynamic(args)
 
-if not rigid_protein:  # default is False - # this is the default case
-    protein_dynamic = "--protein_dynamic"
-else:
-    protein_dynamic = ""
-
-logger.info(f"Protein dynamic: {protein_dynamic}\n")
 
 # -------------------------------------------------------------------
 # Set up arguments
 # -------------------------------------------------------------------
+header = args.header
 hts = args.hts
 device = args.device
 seed = args.seed
@@ -399,19 +425,24 @@ num_workers = args.num_workers
 logger.info("-" * 80)
 logger.info("ESM2 Output Directory: Setting up esm2 output directory")
 logger.info("-" * 80)
-esm2_output_dir = os.path.join(output_dir, "esm2_output")
-os.makedirs(esm2_output_dir, exist_ok=True)
-model_dir = os.path.join(script_folder, "esm_models")
+# scripts
 esm_embedding_preparation_script_path = os.path.join(
     parent_script_folder, "datasets", "esm_embedding_preparation.py"
 )
-esm_festa_output_path = os.path.join(
-    processed_data_dir, f"prepared_for_esm_{header}.fasta"
-)
 esm_embedding_extraction_script_path = os.path.join(
-    parent_script_folder, "esm", "scripts", "extract.py"
+    parent_script_folder, "esm", "scripts", "extract2.py"
 )
 
+# output directories
+pdb_id = os.path.basename(proteinFile).split("_")[0]
+esm_festa_output_path = os.path.join(
+    processed_data_dir, pdb_id, f"prepared_for_esm_{header}.fasta"
+)
+esm2_output_dir = os.path.join(processed_data_dir, pdb_id, "esm2_output")
+os.makedirs(esm2_output_dir, exist_ok=True)
+model_dir = os.path.join(script_folder, "esm_models")
+
+# logs
 logger.info(f"ESM2 Output Directory: {esm2_output_dir}")
 logger.info(f"ESM2 Model Directory: {model_dir}")
 logger.info(
@@ -426,7 +457,7 @@ logger.info("-" * 80)
 logger.info("Inference Output Directory: Setting up inference output directory")
 logger.info("-" * 80)
 inference_script_path = os.path.join(parent_script_folder, "inference.py")
-inference_output_dir = os.path.join(output_dir, results, header)
+inference_output_dir = os.path.join(processed_data_dir, pdb_id, header)
 logger.info(f"Inference Output Directory: {inference_output_dir}")
 logger.info(f"Inference Script Path: {inference_script_path}\n")
 
@@ -489,63 +520,49 @@ else:
     if not no_inference:  # default is False - so True
         # Run esm embedding preparation
         logger.info("Running esm embedding preparation...")
-        try:
-            cmd = f"{python} {esm_embedding_preparation_script_path} \
-                --protein_ligand_csv {ligandFile_with_protein_path} \
-                --out_file {esm_festa_output_path}"
-            do(cmd)
-            logger.info(
-                f"Done with esm embedding preparation: Saved to {esm_festa_output_path}\n"
-            )
-        except Exception as e:
-            logger.error(f"Error with esm embedding preparation: {e}")
-            raise e
+        cmd = f"{python} {esm_embedding_preparation_script_path} \
+            --protein_ligand_csv {ligandFile_with_protein_path} \
+            --out_file {esm_festa_output_path}"
+        do(cmd)
+        logger.info(
+            f"Done with esm embedding preparation: Saved to {esm_festa_output_path}\n"
+        )
 
         # Run esm embedding extraction
         logger.info("Running esm embedding extraction...")
-        try:
-            cmd = f"CUDA_VISIBLE_DEVICES={device} \
-                {python} {esm_embedding_extraction_script_path} \
-                esm2_t33_650M_UR50D \
-                {esm_festa_output_path} \
-                {esm2_output_dir} \
-                --repr_layers 33 \
-                --include per_tok \
-                --truncation_seq_length 10000 \
-                --model_dir {model_dir}"
-            do(cmd)
-            logger.info(
-                f"Done with esm embedding extraction: Saved to {esm2_output_dir}\n"
-            )
-        except Exception as e:
-            logger.error(f"Error with esm embedding extraction: {e}")
-            raise e
+        cmd = f"CUDA_VISIBLE_DEVICES={device} \
+            {python} {esm_embedding_extraction_script_path} \
+            esm2_t33_650M_UR50D \
+            {esm_festa_output_path} \
+            {esm2_output_dir} \
+            --repr_layers 33 \
+            --include per_tok \
+            --truncation_seq_length 10000 \
+            --model_dir {model_dir}"
+        do(cmd)
+        logger.info(f"Done with esm embedding extraction: Saved to {esm2_output_dir}\n")
 
         # Run inference
         logger.info("Running inference...")
-        try:
-            cmd = f"CUDA_VISIBLE_DEVICES={device} \
-                {python} {inference_script_path} \
-                --seed {seed} \
-                --ckpt {ckpt} \
-                {protein_dynamic}"
-            cmd += f" --save_visualisation \
-                --model_dir {model_workdir}  \
-                --protein_ligand_csv {ligandFile_with_protein_path} "
-            cmd += f" --esm_embeddings_path {esm2_output_dir} \
-                --out_dir {inference_output_dir} \
-                --inference_steps {inference_steps} \
-                --samples_per_complex {samples_per_complex} \
-                --savings_per_complex {savings_per_complex} \
-                --batch_size 5 \
-                --actual_steps {inference_steps} \
-                --no_final_step_noise"
-            do(cmd)
-            print("inference complete.")
-            logger.info(f"Done with inference: Saved to {inference_output_dir}\n")
-        except Exception as e:
-            logger.error(f"Error with inference: {e}")
-            raise e
+        cmd = f"CUDA_VISIBLE_DEVICES={device} \
+            {python} {inference_script_path} \
+            --seed {seed} \
+            --ckpt {ckpt} \
+            {protein_dynamic}"
+        cmd += f" --save_visualisation \
+            --model_dir {model_workdir}  \
+            --protein_ligand_csv {ligandFile_with_protein_path} "
+        cmd += f" --esm_embeddings_path {esm2_output_dir} \
+            --out_dir {inference_output_dir} \
+            --inference_steps {inference_steps} \
+            --samples_per_complex {samples_per_complex} \
+            --savings_per_complex {savings_per_complex} \
+            --batch_size 5 \
+            --actual_steps {inference_steps} \
+            --no_final_step_noise"
+        do(cmd)
+        print("inference complete.")
+        logger.info(f"Done with inference: Saved to {inference_output_dir}\n")
 
     # -------------------------------------------------------------------
     # Set up relax final step structure
@@ -562,22 +579,19 @@ else:
 
     if not no_relax:  # default is False - so do this
         logger.info("Running relax final step structure...")
-        try:
-            cmd = f"CUDA_VISIBLE_DEVICES={device} \
-                {relax_python} \
-                {relax_final_script_path} \
-                --results_path {relax_final_output_dir} \
-                --samples_per_complex {samples_per_complex} \
-                --num_workers {num_workers}"
-            # print("relax final step structure.")
-            # exit()
-            do(cmd)
-            logger.info(
-                f"Done with relax final step structure: Saved to {relax_final_output_dir}\n"
-            )
-        except Exception as e:
-            logger.error(f"Error with relax final step structure: {e}")
-            raise e
+        cmd = f"CUDA_VISIBLE_DEVICES={device} \
+            {relax_python} \
+            {relax_final_script_path} \
+            --results_path {relax_final_output_dir} \
+            --samples_per_complex {samples_per_complex} \
+            --num_workers {num_workers}"
+        # print("relax final step structure.")
+        # exit()
+        do(cmd)
+        logger.info(
+            f"Done with relax final step structure: Saved to {relax_final_output_dir}\n"
+        )
+
     # -------------------------------------------------------------------
     # Set up movie generation
     # -------------------------------------------------------------------s

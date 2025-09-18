@@ -7,3 +7,13 @@ betty/__MACOSX/*
 betty/workdir/*
 
 betty/results*
+betty/pdbbind/data/*
+betty/data/cache_torsion/*
+results/*
+esm_models/*
+dynamicbind_benchmark/negative_binding/data/*
+dynamicbind_benchmark/pdbbind/data/*
+betty/*
+.p.npy
+.score.npy
+.so3_*
